@@ -42,8 +42,9 @@ export default function Data() {
       <div className="card">
         <h2>Backup &amp; restore</h2>
         <p className="muted" style={{ marginTop: 0 }}>
-          Everything lives in one SQLite file, but you can also keep a JSON backup anywhere
-          (Drive, WhatsApp to yourself, a pen drive).
+          Everything is stored in this browser only (SQLite running locally via WebAssembly).
+          Clearing site data or switching device/browser loses it — so keep a JSON backup
+          somewhere safe (Drive, WhatsApp to yourself, a pen drive) and restore it anywhere.
         </p>
         <button onClick={backup} disabled={busy}>{busy ? 'Working…' : '⬇ Download JSON backup'}</button>
         <div style={{ marginTop: 10 }}>
@@ -59,9 +60,6 @@ export default function Data() {
         <p className="muted">
           On Android Chrome: menu (⋮) → “Add to Home screen”. On iPhone Safari: Share →
           “Add to Home Screen”. It then opens full-screen like a normal app.
-        </p>
-        <p className="muted">
-          API docs for power users: <a href="/docs">/docs</a>
         </p>
       </div>
     </>

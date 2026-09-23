@@ -4,10 +4,35 @@ A single-user envelope budget for a student: get pocket money, split it into
 category envelopes, log expenses in INR, and when one envelope runs short the
 app computes the least-painful way to cover the gap from your other envelopes.
 
-One FastAPI process serves the JSON API **and** the built React UI. Data lives
-in one SQLite file. No Docker, no Postgres, no external services.
+The app is **fully client-side**: SQLite runs in the browser via WebAssembly
+(sql.js) and the whole database is persisted to the browser's storage. It is
+hosted on GitHub Pages as static files — no server, no Docker, no external
+services. An optional FastAPI mode (same UI, server-side SQLite file) is kept
+for local/desktop use and is what the pytest suite exercises.
 
-## Run it
+## Live app
+
+Deployed from the `docs/` folder via GitHub Pages (Settings → Pages →
+*Deploy from a branch* → `main` / `/docs`). Every `npm run build` + push
+updates the site.
+
+**Your data lives in that browser only.** Clearing site data or switching
+device/browser loses it — use *Data → Download JSON backup* regularly and
+restore it anywhere.
+
+## Run it (local dev / build)
+
+```powershell
+cd Expense_tracker\frontend
+npm install
+npm run dev        # Vite dev server, app runs entirely in the browser
+npm run build      # -> ../docs (the GitHub Pages folder; commit it to deploy)
+```
+
+## Run it (optional FastAPI mode)
+
+Serves the same built UI from `docs/` plus a server-side JSON API backed by
+one SQLite file:
 
 ```powershell
 cd Expense_tracker
@@ -17,18 +42,10 @@ pip install -r requirements.txt      # once
 python -m uvicorn backend.app.main:app --reload
 ```
 
-Open **http://127.0.0.1:8000** on the phone/laptop. Interactive API docs live
-at **http://127.0.0.1:8000/docs**. The database file is created automatically at
-`data/expenses.db`; override with the `EXPENSE_DB_PATH` environment variable.
-
-### Frontend only (dev, hot reload)
-
-```powershell
-cd frontend
-npm install
-npm run dev        # Vite dev server on :5173, proxies /api to :8000
-npm run build      # production build -> ../static, served by FastAPI
-```
+Open **http://127.0.0.1:8000**. API docs at **/docs**. The database file is
+created automatically at `data/expenses.db`; override with the
+`EXPENSE_DB_PATH` environment variable. (The built UI itself always talks to
+the in-browser engine; the API is used by tests and power users.)
 
 ### Tests
 
@@ -59,7 +76,7 @@ edit the amounts, or decline (the envelope then shows as overspent). If no
 feasible plan exists, the UI says so and offers to log it as an overspend.
 Every applied move is written to the `transfers` table with a timestamp.
 
-**Optimizer** (`backend/app/optimizer.py`, pure function, scipy `linprog`):
+**Optimizer.** The reallocation model:
 
 ```
 minimize    sum(x_i * pain_i)            # total regret of lending
@@ -68,35 +85,45 @@ subject to  sum(x_i) >= deficit          # cover the gap
             x_i = 0 for locked categories
 ```
 
-Solved with HiGHS, floored to whole paise, and the ≤ n-paise rounding remainder
-is given to the least-painful donors with room. Returns the moves, the total
-pain (`sum x_i*pain_i`), an average pain score per rupee moved, and a
+The backend (`backend/app/optimizer.py`) solves it with scipy `linprog`
+(HiGHS), floors to whole paise and hands the rounding remainder to the
+least-painful donors with room. The browser port (`frontend/src/local/optimizer.js`)
+uses the fact that this LP is solved exactly by greedy fill in ascending-pain
+order. Both return the moves, total pain, average pain per rupee moved, and a
 `feasible` flag.
 
 ## Backup / restore
 
 Data → “Download JSON backup” saves every table to one file; “Restore”
 replaces the current database with it (atomic — a bad file leaves the DB
-untouched). Same thing via API: `GET /api/backup`, `POST /api/restore`.
+untouched). Same tables and format in both modes, so a backup from the FastAPI
+mode restores into the browser and vice versa.
 
 ## Install as an app (PWA)
 
 Open the site in Chrome (Android) → menu → *Add to Home screen*; Safari
-(iPhone) → Share → *Add to Home Screen*. Runs standalone; the service worker
-caches the app shell (your data stays server-side, always fetched live).
+(iPhone) → Share → *Add to Home Screen*. Runs standalone, fully offline: the
+service worker caches the shell and all data lives on-device.
 
 ## Layout
 
 ```
+docs/                 # built UI, served by GitHub Pages (commit to deploy)
+frontend/
+  src/local/
+    schema.js         # SQLite schema + balance SQL (mirror of backend/app/db.py)
+    engine.js         # in-browser /api/* implementation over sql.js + localStorage
+    optimizer.js      # greedy least-pain rebalancing (mirror of backend optimizer)
+  src/                # React tabs (Budget/Spend/Income/Envelopes/Data)
+  public/             # manifest, service worker, icons, .nojekyll
 backend/app/
-  config.py         # EXPENSE_DB_PATH
-  db.py             # schema (auto-created), balance SQL
-  optimizer.py      # pure linprog reallocation model
-  categories_api.py # CRUD + archive + seed
-  income_api.py     # income splits + templates
-  expenses_api.py   # logging, budget summary, rebalance, transfer log
-  backup_api.py     # JSON export/import
-  main.py           # create_app() wiring everything
-frontend/           # Vite + React, builds into ../static
-backend/tests/      # pytest, one file per step
+  config.py           # EXPENSE_DB_PATH
+  db.py               # schema (auto-created), balance SQL
+  optimizer.py        # pure linprog reallocation model
+  categories_api.py   # CRUD + archive + seed
+  income_api.py       # income splits + templates
+  expenses_api.py     # logging, budget summary, rebalance, transfer log
+  backup_api.py       # JSON export/import
+  main.py             # create_app() wiring everything
+backend/tests/        # pytest, one file per step
 ```

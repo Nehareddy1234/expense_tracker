@@ -1,28 +1,22 @@
-async function j(rPromise) {
-  let r
+// Same surface as before (api.get/post/put/del on /api/* paths), but requests
+// are served by the in-browser SQLite engine instead of fetch/uvicorn.
+
+import { handle, ApiError } from './local/engine.js'
+
+async function j(method, path, body) {
   try {
-    r = await rPromise
+    return await handle(method, path, body)
   } catch (e) {
-    throw new Error(`Network error: ${e.message}`)
+    if (e instanceof ApiError) throw e
+    throw new Error(`Local DB error: ${e.message}`)
   }
-  if (!r.ok) {
-    let msg = `${r.status} ${r.statusText}`
-    try {
-      const d = (await r.json()).detail
-      msg = typeof d === 'string' ? d : (d && d[0] && d[0].msg) || JSON.stringify(d)
-    } catch {}
-    throw new Error(msg)
-  }
-  return r.status === 204 ? null : r.json()
 }
 
-const JSONH = { 'Content-Type': 'application/json' }
-
 export const api = {
-  get: (p) => j(fetch(p)),
-  post: (p, b) => j(fetch(p, { method: 'POST', headers: JSONH, body: JSON.stringify(b ?? null) })),
-  put: (p, b) => j(fetch(p, { method: 'PUT', headers: JSONH, body: JSON.stringify(b) })),
-  del: (p) => j(fetch(p, { method: 'DELETE' })),
+  get: (p) => j('GET', p),
+  post: (p, b) => j('POST', p, b ?? null),
+  put: (p, b) => j('PUT', p, b),
+  del: (p) => j('DELETE', p),
 }
 
 export const fmt = (paise) => {

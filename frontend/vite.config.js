@@ -1,13 +1,13 @@
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 
+// base './' + outDir '../docs': GitHub Pages serves the app from
+// https://<user>.github.io/<repo>/ at any subpath.
 export default defineConfig({
   plugins: [react()],
+  base: './',
   build: {
-    outDir: '../static', // served by FastAPI at /
+    outDir: '../docs',
     emptyOutDir: true,
-  },
-  server: {
-    proxy: { '/api': 'http://127.0.0.1:8000' }, // `npm run dev` against uvicorn
   },
 })

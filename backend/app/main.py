@@ -1,4 +1,4 @@
-"""FastAPI app: JSON API under /api, built frontend served from static/ (Step 6)."""
+"""FastAPI app: JSON API under /api, built frontend served from docs/ (Step 6)."""
 
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -42,9 +42,9 @@ def create_app(database_path: str | None = None) -> FastAPI:
     def health():
         return {"status": "ok"}
 
-    # Serve the built React app once it exists (Step 6); API routes are
-    # registered first so /api/* always wins.
-    static_dir = Path(config.ROOT) / "static"
+    # Serve the built React app once it exists (npm run build -> docs/); API
+    # routes are registered first so /api/* always wins.
+    static_dir = Path(config.ROOT) / "docs"
     if static_dir.is_dir():
         app.mount("/", StaticFiles(directory=static_dir, html=True), name="static")
 

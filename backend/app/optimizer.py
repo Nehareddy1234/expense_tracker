@@ -72,3 +72,51 @@ def plan_rebalance(deficit_paise: int, donors: list[Donor]) -> RebalancePlan:
     total_pain = float(sum(amt * d.pain for d, amt in zip(donors, x)))
     moves = tuple((d.id, amt) for d, amt in zip(donors, x) if amt > 0)
     return RebalancePlan(moves, total_pain, round(total_pain / (100 * total), 2), True)
+
+
+@dataclass(frozen=True)
+class BudgetMove:
+    from_category_id: int | None  # None = funded from Unallocated
+    to_category_id: int
+    amount_paise: int
+
+
+def plan_budget_set(
+    targets: dict[int, int], balances: dict[int, dict], unallocated_paise: int
+) -> tuple[list[BudgetMove], int]:
+    """Turn user-set envelope targets into money moves.
+
+    Envelopes above their target are explicit instructions, so their surplus
+    donates first (lowest pain first); idle Unallocated money only tops up
+    whatever is still missing. Returns (moves, short_paise) where short > 0
+    means the targets cannot all be met.
+    """
+    needs: list[list[int]] = []
+    donors: list[list[int]] = []
+    for cid, target in targets.items():
+        bal = balances[cid]["balance_paise"]
+        if target > bal:
+            needs.append([cid, target - bal])
+        elif bal > target:
+            donors.append([cid, bal - target])
+    donors.sort(key=lambda d: (balances[d[0]]["pain_weight"], -d[1]))
+
+    moves: list[BudgetMove] = []
+    pool = unallocated_paise
+    short = 0
+    for cid, need in sorted(needs):
+        for donor in donors:
+            if need <= 0:
+                break
+            give = min(donor[1], need)
+            if give:
+                moves.append(BudgetMove(donor[0], cid, give))
+                donor[1] -= give
+                need -= give
+        take = min(pool, need)
+        if take:
+            moves.append(BudgetMove(None, cid, take))
+            pool -= take
+            need -= take
+        short += need
+    return moves, short

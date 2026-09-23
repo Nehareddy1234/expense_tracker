@@ -40,3 +40,42 @@ export function planRebalance(deficitPaise, donors) {
     feasible: true,
   }
 }
+
+// Mirror of backend/app/optimizer.py plan_budget_set: turn user-set envelope
+// targets into moves. Surplus above an explicit target donates first (lowest
+// pain first); Unallocated money only tops up the rest. { moves, short }.
+export function planBudgetSet(targets, balances, unallocatedPaise) {
+  const needs = []
+  const donors = []
+  for (const [cidStr, target] of Object.entries(targets)) {
+    const cid = Number(cidStr)
+    const bal = balances[cid] ? balances[cid].balance_paise : 0
+    if (target > bal) needs.push([cid, target - bal])
+    else if (bal > target) donors.push([cid, bal - target])
+  }
+  donors.sort((a, b) => balances[a[0]].pain_weight - balances[b[0]].pain_weight || b[1] - a[1])
+
+  const moves = []
+  let pool = unallocatedPaise
+  let short = 0
+  for (const [cid, need0] of needs.sort((a, b) => a[0] - b[0])) {
+    let need = need0
+    for (const donor of donors) {
+      if (need <= 0) break
+      const give = Math.min(donor[1], need)
+      if (give) {
+        moves.push({ from: donor[0], to: cid, amount: give })
+        donor[1] -= give
+        need -= give
+      }
+    }
+    const take = Math.min(pool, need)
+    if (take) {
+      moves.push({ from: null, to: cid, amount: take })
+      pool -= take
+      need -= take
+    }
+    short += need
+  }
+  return { moves, short }
+}

@@ -123,3 +123,12 @@ class MoveIn(BaseModel):
 
 class RebalanceIn(BaseModel):
     moves: list[MoveIn] = Field(min_length=1)
+
+
+class TargetIn(BaseModel):
+    category_id: int
+    amount_paise: int = Field(ge=0)
+
+
+class BudgetSetIn(BaseModel):
+    targets: list[TargetIn] = Field(min_length=1)

@@ -13,8 +13,8 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from . import db
 from .categories_api import now_iso
-from .optimizer import Donor, plan_rebalance
-from .schemas import ExpenseIn, ExpenseOut, RebalanceIn
+from .optimizer import Donor, plan_budget_set, plan_rebalance
+from .schemas import BudgetSetIn, ExpenseIn, ExpenseOut, RebalanceIn
 
 
 def _expense_row(conn: sqlite3.Connection, expense_id: int) -> ExpenseOut:
@@ -169,5 +169,90 @@ def create_router(get_conn: Callable) -> APIRouter:
             " ORDER BY t.id DESC"
         ).fetchall()
         return [dict(r) for r in rows]
+
+    def _budget_targets(conn, body: BudgetSetIn) -> dict[int, int]:
+        targets: dict[int, int] = {}
+        for t in body.targets:
+            row = conn.execute(
+                "SELECT id FROM categories WHERE id = ? AND archived = 0", (t.category_id,)
+            ).fetchone()
+            if row is None:
+                raise HTTPException(422, f"Category {t.category_id} not found")
+            targets[t.category_id] = t.amount_paise
+        return targets
+
+    def _budget_plan(conn, body: BudgetSetIn):
+        targets = _budget_targets(conn, body)
+        balances = db.category_balances(conn)
+        moves, short = plan_budget_set(targets, balances, db.total_unallocated(conn))
+        names = {cid: b["name"] for cid, b in balances.items()}
+        return moves, short, names, balances
+
+    @router.post("/budget/plan")
+    def budget_plan(body: BudgetSetIn, conn=Depends(get_conn)):
+        moves, short, names, _ = _budget_plan(conn, body)
+        return {
+            "feasible": short == 0,
+            "short_paise": short,
+            "moves": [
+                {
+                    "from_category_id": m.from_category_id,
+                    "from_name": "Unallocated" if m.from_category_id is None else names[m.from_category_id],
+                    "to_category_id": m.to_category_id,
+                    "to_name": names[m.to_category_id],
+                    "amount_paise": m.amount_paise,
+                }
+                for m in moves
+            ],
+        }
+
+    @router.post("/budget/apply")
+    def budget_apply(body: BudgetSetIn, conn=Depends(get_conn)):
+        moves, short, _, _ = _budget_plan(conn, body)
+        if short > 0:
+            raise HTTPException(
+                422,
+                f"Targets need {short} paise more than is available — add income or lower a target",
+            )
+        for m in moves:
+            if m.from_category_id is None:
+                # Fund from the Unallocated pool by re-tagging its ledger rows.
+                remaining = m.amount_paise
+                rows = conn.execute(
+                    "SELECT id, income_id, amount_paise FROM income_allocations"
+                    " WHERE category_id IS NULL AND amount_paise > 0 ORDER BY id DESC"
+                ).fetchall()
+                for row in rows:
+                    if remaining <= 0:
+                        break
+                    take = min(row["amount_paise"], remaining)
+                    conn.execute(
+                        "UPDATE income_allocations SET amount_paise = amount_paise - ? WHERE id = ?",
+                        (take, row["id"]),
+                    )
+                    conn.execute(
+                        "INSERT INTO income_allocations (income_id, category_id, amount_paise)"
+                        " VALUES (?, ?, ?)",
+                        (row["income_id"], m.to_category_id, take),
+                    )
+                    remaining -= take
+            else:
+                balances = db.category_balances(conn)
+                bal = balances[m.from_category_id]["balance_paise"]
+                if m.amount_paise > bal:
+                    raise HTTPException(
+                        422, f"Cannot move {m.amount_paise} paise out of a {bal} paise envelope"
+                    )
+                conn.execute(
+                    "INSERT INTO transfers (expense_id, from_category_id, to_category_id,"
+                    " amount_paise, created_at) VALUES (NULL, ?, ?, ?, ?)",
+                    (m.from_category_id, m.to_category_id, m.amount_paise, now_iso()),
+                )
+        balances = db.category_balances(conn)
+        return {
+            "applied": len(moves),
+            "categories": list(balances.values()),
+            "unallocated_paise": db.total_unallocated(conn),
+        }
 
     return router

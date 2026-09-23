@@ -123,3 +123,7 @@ nav.tabs button.on { color: var(--teal); }
 .summary .card { margin: 0; text-align: center; padding: 10px 6px; }
 .summary .v { font-size: 17px; font-weight: 800; }
 .summary .k { font-size: 11px; color: var(--mut); font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; }
+
+.splitrow .grow { flex: 2; text-align: left; }
+.splitrow .shrink { flex: 0 0 auto; }
+.err-text { color: #b91c1c; font-size: 14px; margin: 6px 0; }

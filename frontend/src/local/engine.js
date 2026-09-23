@@ -6,7 +6,7 @@
 import initSqlJs from 'sql.js'
 import wasmUrl from 'sql.js/dist/sql-wasm.wasm?url'
 import { SCHEMA, BALANCES_SQL, SEED, TABLES, SCHEMA_VERSION } from './schema.js'
-import { planRebalance, capacityPaise } from './optimizer.js'
+import { planRebalance, capacityPaise, planBudgetSet } from './optimizer.js'
 
 const LS_KEY = 'expense-tracker-db-v1'
 const UNALLOCATED = 'Unallocated'
@@ -551,6 +551,86 @@ function deleteTemplate(db, id) {
   return null // 204
 }
 
+function budgetTargets(db, body) {
+  check(Array.isArray(body.targets) && body.targets.length >= 1, 'targets must be a non-empty list')
+  const targets = {}
+  for (const t of body.targets) {
+    const row = one(db, 'SELECT id FROM categories WHERE id = ? AND archived = 0', [t.category_id])
+    if (!row) throw new ApiError(422, `Category ${t.category_id} not found`)
+    check(Number.isInteger(t.amount_paise) && t.amount_paise >= 0, 'amount_paise must be >= 0')
+    targets[t.category_id] = t.amount_paise
+  }
+  return targets
+}
+
+function budgetPlan(db, body) {
+  const targets = budgetTargets(db, body)
+  const balances = categoryBalances(db)
+  const { moves, short } = planBudgetSet(targets, balances, totalUnallocated(db))
+  const names = Object.fromEntries(Object.values(balances).map((b) => [b.id, b.name]))
+  return {
+    feasible: short === 0,
+    short_paise: short,
+    moves: moves.map((m) => ({
+      from_category_id: m.from,
+      from_name: m.from === null ? UNALLOCATED : names[m.from],
+      to_category_id: m.to,
+      to_name: names[m.to],
+      amount_paise: m.amount,
+    })),
+  }
+}
+
+function budgetApply(db, body) {
+  const targets = budgetTargets(db, body)
+  const balances = categoryBalances(db)
+  const { moves, short } = planBudgetSet(targets, balances, totalUnallocated(db))
+  if (short > 0) {
+    throw new ApiError(422, `Targets need ${short} paise more than is available — add income or lower a target`)
+  }
+  tx(db, () => {
+    for (const m of moves) {
+      if (m.from === null) {
+        // Fund from the Unallocated pool by re-tagging its ledger rows.
+        let remaining = m.amount
+        const rows = all(
+          db,
+          'SELECT id, income_id, amount_paise FROM income_allocations' +
+            ' WHERE category_id IS NULL AND amount_paise > 0 ORDER BY id DESC'
+        )
+        for (const row of rows) {
+          if (remaining <= 0) break
+          const take = Math.min(row.amount_paise, remaining)
+          db.run('UPDATE income_allocations SET amount_paise = amount_paise - ? WHERE id = ?', [take, row.id])
+          db.run('INSERT INTO income_allocations (income_id, category_id, amount_paise) VALUES (?, ?, ?)', [
+            row.income_id,
+            m.to,
+            take,
+          ])
+          remaining -= take
+        }
+      } else {
+        const fresh = categoryBalances(db)
+        const bal = fresh[m.from] ? fresh[m.from].balance_paise : 0
+        if (m.amount > bal) {
+          throw new ApiError(422, `Cannot move ${m.amount} paise out of a ${bal} paise envelope`)
+        }
+        db.run(
+          'INSERT INTO transfers (expense_id, from_category_id, to_category_id, amount_paise, created_at)' +
+            ' VALUES (NULL, ?, ?, ?, ?)',
+          [m.from, m.to, m.amount, nowIso()]
+        )
+      }
+    }
+  })
+  const after = categoryBalances(db)
+  return {
+    applied: moves.length,
+    categories: Object.values(after),
+    unallocated_paise: totalUnallocated(db),
+  }
+}
+
 function exportBackup(db) {
   const tables = {}
   for (const t of TABLES) tables[t] = all(db, `SELECT * FROM ${t} ORDER BY id`)
@@ -624,7 +704,11 @@ export async function handle(method, url, body) {
     if (M === 'POST' && seg.length === 3 && seg[2] === 'unarchive') return setArchived(db, at(1), false)
   }
 
-  if (seg[0] === 'budget' && M === 'GET') return budget(db)
+  if (seg[0] === 'budget') {
+    if (M === 'GET' && seg.length === 1) return budget(db)
+    if (M === 'POST' && seg[1] === 'plan') return budgetPlan(db, body)
+    if (M === 'POST' && seg[1] === 'apply') return budgetApply(db, body)
+  }
 
   if (seg[0] === 'expenses') {
     if (M === 'GET' && seg.length === 1) return listExpenses(db, q)

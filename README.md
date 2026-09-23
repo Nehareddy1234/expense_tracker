@@ -76,6 +76,15 @@ edit the amounts, or decline (the envelope then shows as overspent). If no
 feasible plan exists, the UI says so and offers to log it as an overspend.
 Every applied move is written to the `transfers` table with a timestamp.
 
+**Set budgets** (Budget tab → *Set budgets*) — type the amount you want in each
+envelope and the app moves the money to match: envelopes you leave above their
+target donate first (lowest pain first), and idle Unallocated money tops up
+the rest. Unallocated funding re-tags the income ledger (so allocations always
+still sum to income); envelope-to-envelope moves land in the transfer log. If
+the targets need more money than exists, the plan says exactly what's short
+and refuses to apply (`POST /api/budget/plan` to preview, `/api/budget/apply`
+to execute).
+
 **Optimizer.** The reallocation model:
 
 ```
